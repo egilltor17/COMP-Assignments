@@ -24,7 +24,7 @@ signal.signal(signal.SIGINT, shutdownSignal)
 while(True):
     ##1 Capture frame-by-frame
     ret, frame = cap.read()
-    frame = cv.flip(frame, 1)
+    # frame = cv.flip(frame, 1)
 
     ##3 Start of time measurement
     startTime = time.time()
