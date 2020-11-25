@@ -21,13 +21,16 @@ def shutdownSignal(signalNumber, frame):
 
 signal.signal(signal.SIGINT, shutdownSignal)
 
+FPS = 0
+
 while(True):
+    ##3 Start of time measurement
+    startTime = time.time()
+    
     ##1 Capture frame-by-frame
     ret, frame = cap.read()
     # frame = cv.flip(frame, 1)
 
-    ##3 Start of time measurement
-    startTime = time.time()
 
     ##4 Find and mark the brightspot
     ## Convert to monotone
@@ -56,12 +59,14 @@ while(True):
     # cv.circle(frame, maxLocR, 5, (100,10,250), 2)
 
     ##3 Display the FPS
-    cv.putText(frame, f'FPS: {1 / (time.time() - startTime):.2f}', (10,40), cv.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv.LINE_AA)
+    cv.putText(frame, f'FPS: {FPS):.2f}', (10,40), cv.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv.LINE_AA)
     ##2 Display the resulting frame
     cv.imshow('frame', frame)
 
     if cv.waitKey(1) & 0xFF == ord('q'):
         break
+
+    FPS = 1 / (time.time() - startTime
 
 # When everything done, release the capture
 cap.release()

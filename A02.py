@@ -5,6 +5,10 @@ import signal
 import time
 from scipy import sparse
 from scipy import optimize
+from functools import reduce
+import operator
+import math
+
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error
 
@@ -60,7 +64,10 @@ def distFromLineToPoint(a, b, c, points):
 def calcPoint(x, m, b):
     return (int(x), int(x * m + b))
 
-def RANSAC(points, n=2, k=200, t=3, d=150):
+def lineIntercept(m1, b1, m2, b2):
+    return (b1 - b2) / (m2 - m1) if m1 != m2 else float('inf')
+
+def RANSAC(points, n=2, k=200, t=20, d=100):
     """
     Given:
     data – A set of observations.
@@ -77,6 +84,9 @@ def RANSAC(points, n=2, k=200, t=3, d=150):
     bestFit = ((0, 0), (int(cap.get(3)), int(cap.get(4))))
     bestErr = float('inf')
     bestPnt = None
+    bestInt = None
+    bestM = float('nan')
+    bestB = float('nan')
 
     while iterations < k:
         sampledInliersIndex = np.random.choice(np.arange(points.shape[0]), size=n, replace=False)
@@ -84,16 +94,23 @@ def RANSAC(points, n=2, k=200, t=3, d=150):
         nonSampledPoints = np.delete(points, sampledInliersIndex, 0)
         
         a, b, c = pointLine(*sampledInliers)
-        alsoInliers = nonSampledPoints[distFromLineToPoint(a, b, c, nonSampledPoints) < t]
+        # alsoInliers = nonSampledPoints[distFromLineToPoint(a, b, c, nonSampledPoints) < t]
+        alsoInliersIndex = np.argwhere(distFromLineToPoint(a, b, c, nonSampledPoints) < t).flatten()
+        alsoInliers = nonSampledPoints[alsoInliersIndex]
 
         if len(alsoInliers) > d:
             ## This implies that we may have found a good model
+            indexes = np.concatenate((sampledInliersIndex, alsoInliersIndex), 0)
             inliers = np.concatenate((sampledInliers, alsoInliers), 0)
-            
             # print(np.polyfit(inliers[:,0], inliers[:,1], 1))
             m, b = np.polyfit(inliers[:,0], inliers[:,1], 1)
-            betterModel = (calcPoint(sampledInliers[0][0], m, b), calcPoint(sampledInliers[1][0], m, b))
-            thisErr = np.sum(distFromLineToPoint(m, -1, b, inliers))
+            # betterModel = (calcPoint(sampledInliers[0][0], m, b), calcPoint(sampledInliers[1][0], m, b))
+            # betterModel = (calcPoint(inliers[0][0], m, b), calcPoint(inliers[-1][0], m, b))
+
+            actualInliersIndex = np.argwhere(distFromLineToPoint(m, -1, b, points) < t).flatten()
+            actualInliers = points[actualInliersIndex]
+
+            thisErr = np.sum(distFromLineToPoint(m, -1, b, actualInliers))
             
             # (m, b), c, _, _, _ = np.polyfit(inliers[:,0], inliers[:,1], 1, full=True)
             # thisErr = c
@@ -105,15 +122,19 @@ def RANSAC(points, n=2, k=200, t=3, d=150):
             # thisErr = mean_squared_error(model.predict(inliers[:,0].reshape(-1, 1)), inliers[:,1])
             
             if thisErr < bestErr:
+                inliers = inliers[inliers[:,0].argsort()]
                 # bestFit = (calcPoint(sampledInliers[0][0], m, b), calcPoint(sampledInliers[1][0], m, b))
                 # bestFit = ((sampledInliers[0,0], int(betterModel[0])), (sampledInliers[1,0], int(betterModel[1])))
-                bestFit = betterModel
+                bestFit = (calcPoint(np.min(inliers[:,0]), m, b), calcPoint(np.max(inliers[:,0]), m, b))
                 bestErr = thisErr
-                bestPnt = inliers
+                bestPnt = actualInliers
+                bestInt = actualInliersIndex
+                bestM = m
+                bestB = b
         
         iterations += 1
     
-    return bestFit
+    return bestFit, bestM, bestB,  bestPnt, bestInt
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, shutdownSignal)
@@ -121,6 +142,7 @@ if __name__ == "__main__":
     while(True):
         ##1 Capture frame-by-frame
         ret, frame = cap.read()
+        frame_rec = np.zeros_like(frame)
 
         ## Start of time measurement
         startTime = time.time()
@@ -139,18 +161,102 @@ if __name__ == "__main__":
 
         if points.shape[0] > 2:
             ##3 Use RANSAC to fit a single straight line with the greatest support to the extracted edge pixels.
-            line = RANSAC(points)
+            line, m, b, inliers, indexes = RANSAC(points)
             ##4 Display the line in the live image
             cv.line(frame, line[0], line[1], (0,0,255), 3)
+            
+            # while inliers is not None:
+            #     for i in inliers:
+            #         cv.circle(frame, tuple(i), 1, (50,50,50), 2)
+            #     points = np.delete(points, indexes, 0)
+            #     if points.shape[0] > 2:
+            #         line, inliers, indexes = RANSAC(points)
+            #     cv.line(frame, line[0], line[1], (0,0,255), 3)
+            
+            ## Draw multiple lines
+            if inliers is not None:
+                for i in inliers:
+                    cv.circle(frame, tuple(i), 1, (0,0,128), 2)
+                s1 = points.shape
+                points2 = np.delete(points, indexes, 0)
+                if points2.shape[0] > 2:
+                    line2, m2, b2, inliers2, indexes2 = RANSAC(points2)
+                    if inliers2 is not None:
+                        for i in inliers2:
+                            cv.circle(frame, tuple(i), 1, (0,128,0), 2)
+                        s2 = points2.shape
+                        cv.line(frame, line2[0], line2[1], (0,255,0), 3)
+                        points3 = np.delete(points2, indexes2, 0)
+                        if points3.shape[0] > 2:
+                            line3, m3, b3, inliers3, indexes3 = RANSAC(points3)
+                            if inliers3 is not None:                
+                                for i in inliers3:
+                                    cv.circle(frame, tuple(i), 1, (128,0,0), 2)
+                                s3 = points3.shape
+                                cv.line(frame, line3[0], line3[1], (255,0,0), 3)
+                                points4 = np.delete(points3, indexes3, 0)
+                                if points4.shape[0] > 2:
+                                    line4, m4, b4, inliers4, indexes4 = RANSAC(points4)
+                                    if inliers4 is not None:
+                                        for i in inliers4:
+                                            cv.circle(frame, tuple(i), 1, (0,128,128), 2)
+                                        cv.line(frame, line4[0], line4[1], (0,255,255), 3)
+                                        # print(s1, s2, s3, points4.shape)
+
+                                        mbs = sorted([[m, b], [m2, b2], [m3, b3], [m4, b4]], key=lambda x: x[0])
+                                        # print(mbs, [[m, b], [m2, b2], [m3, b3], [m4, b4]])
+                                        # pt1 = calcPoint(lineIntercept(*(mbs[0]), *(mbs[2])), *(mbs[0]))
+                                        # pt2 = calcPoint(lineIntercept(*(mbs[0]), *(mbs[3])), *(mbs[0]))
+                                        # pt3 = calcPoint(lineIntercept(*(mbs[1]), *(mbs[2])), *(mbs[1]))
+                                        # pt4 = calcPoint(lineIntercept(*(mbs[1]), *(mbs[3])), *(mbs[1]))
+                                        pt1 = calcPoint(lineIntercept(mbs[0][0], mbs[0][1], mbs[2][0], mbs[2][1]), mbs[0][0], mbs[0][1])
+                                        pt2 = calcPoint(lineIntercept(mbs[0][0], mbs[0][1], mbs[3][0], mbs[3][1]), mbs[0][0], mbs[0][1])
+                                        pt3 = calcPoint(lineIntercept(mbs[1][0], mbs[1][1], mbs[2][0], mbs[2][1]), mbs[1][0], mbs[1][1])
+                                        pt4 = calcPoint(lineIntercept(mbs[1][0], mbs[1][1], mbs[3][0], mbs[3][1]), mbs[1][0], mbs[1][1])
+                                        
+                                        corners = [pt1, pt2, pt3, pt4]
+                                        if math.isinf(sum([c[0] for c in corners])):
+                                            pt1 = calcPoint(lineIntercept(mbs[0][0], mbs[0][1], mbs[2][0], mbs[2][1]), mbs[2][0], mbs[2][1])
+                                            pt2 = calcPoint(lineIntercept(mbs[1][0], mbs[1][1], mbs[2][0], mbs[2][1]), mbs[2][0], mbs[2][1])
+                                            pt3 = calcPoint(lineIntercept(mbs[0][0], mbs[0][1], mbs[3][0], mbs[3][1]), mbs[3][0], mbs[3][1])
+                                            pt4 = calcPoint(lineIntercept(mbs[1][0], mbs[1][1], mbs[3][0], mbs[3][1]), mbs[3][0], mbs[3][1])
+                                            corners = [pt1, pt2, pt3, pt4]
+
+                                        center = tuple(map(operator.truediv, reduce(lambda x, y: map(operator.add, x, y), corners), [len(corners)] * 2))
+                                        corners = sorted(corners, key=lambda coord: (-135 - math.degrees(math.atan2(*tuple(map(operator.sub, coord, center))[::-1]))) % 360)
+                                        
+
+                                        cv.line(frame, corners[0], corners[1], (255,255,0), 1)
+                                        cv.line(frame, corners[1], corners[2], (255,255,0), 1)
+                                        cv.line(frame, corners[2], corners[3], (255,255,0), 1)
+                                        cv.line(frame, corners[3], corners[0], (255,255,0), 1)
+                                        
+                                        cv.circle(frame, corners[0], 2, (255,0,255), 2)
+                                        cv.circle(frame, corners[1], 2, (255,0,255), 2)
+                                        cv.circle(frame, corners[2], 2, (255,0,255), 2)
+                                        cv.circle(frame, corners[3], 2, (255,0,255), 2)
+
+                                        print(corners)
+
+                                        height, width, channels = frame.shape
+                                        h, mask = cv.findHomography(cv.UMat(np.array(corners)), cv.UMat(np.array([(0,0), (0,width), (height,width), (height,0)])), cv.RANSAC)
+
+                                        # Use homography
+                                        frame_rec = cv.warpPerspective(frame, h, (width, height))
+
 
         ## Display the FPS
         cv.putText(frame, f'FPS: {1 / (time.time() - startTime):.2f}', (10,40), cv.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv.LINE_AA)
         
         ##4 Display the resulting frame
         cv.imshow('frame', frame)
+        cv.imshow('frame rectifieded', frame_rec)
 
-        if cv.waitKey(1) & 0xFF == ord('q'):
+        key = cv.waitKey(1) & 0xFF
+        if key == ord('q'):
             break
+        if key == ord('p'):
+            cv.waitKey(-1)
 
     # When everything done, release the capture
     cap.release()
