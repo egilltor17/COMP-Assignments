@@ -1,0 +1,17 @@
+# Binaries
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Python binaries
+*.pyc
+__pycache__
+
+
+# Trained network weights
+*.weights
+resnet50-v1-7.onnx
+
+# Data
+A03/flower_photos
